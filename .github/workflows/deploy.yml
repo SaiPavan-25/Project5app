@@ -1,0 +1,75 @@
+name: Deploy to Elastic Beanstalk (Blue/Green)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-2
+      APPLICATION_NAME: project5-dev-app
+      ENV_BLUE: project5-dev-blue
+      ENV_GREEN: project5-dev-green
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create artifact (zip)
+        run: |
+          zip -r app.zip . -x ".git/*" -x "node_modules/*"
+
+      - name: Upload to S3 (EB requires S3 source bundle)
+        run: |
+          BUCKET="eb-deploy-${{ github.run_id }}-${{ github.run_attempt }}"
+          aws s3 mb "s3://${BUCKET}" --region "${AWS_REGION}"
+          aws s3 cp app.zip "s3://${BUCKET}/app.zip"
+
+          echo "BUCKET=${BUCKET}" >> $GITHUB_ENV
+
+      - name: Create new EB application version
+        run: |
+          VERSION_LABEL="v-${{ github.sha }}"
+          aws elasticbeanstalk create-application-version \
+            --application-name "${APPLICATION_NAME}" \
+            --version-label "${VERSION_LABEL}" \
+            --source-bundle S3Bucket="${BUCKET}",S3Key="app.zip"
+
+          echo "VERSION_LABEL=${VERSION_LABEL}" >> $GITHUB_ENV
+
+      - name: Deploy to GREEN environment
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "${ENV_GREEN}" \
+            --version-label "${VERSION_LABEL}"
+
+      - name: Wait + smoke test GREEN
+        run: |
+          echo "Waiting for GREEN to become ready..."
+          aws elasticbeanstalk wait environment-updated --environment-name "${ENV_GREEN}"
+
+          GREEN_URL=$(aws elasticbeanstalk describe-environments \
+            --environment-names "${ENV_GREEN}" \
+            --query "Environments[0].EndpointURL" --output text)
+
+          echo "GREEN URL: http://${GREEN_URL}"
+          curl -fsS "http://${GREEN_URL}/" | head -n 20
+
+      # OPTIONAL cutover:
+      # This swaps CNAMEs (Beanstalk's built-in blue/green approach).
+      - name: Swap CNAMEs (Promote GREEN)
+        if: ${{ success() }}
+        run: |
+          aws elasticbeanstalk swap-environment-cnames \
+            --source-environment-name "${ENV_BLUE}" \
+            --destination-environment-name "${ENV_GREEN}"
