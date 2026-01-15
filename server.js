@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("Project 5 Test App – Elastic Beanstalk is running");
+  res.send("Project 5 Test App – Version 2 (GREEN)");
 });
 
 app.get("/health", (req, res) => {
