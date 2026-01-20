@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("Project 5 Test App – Version 2 (GREEN)");
+  res.send("Project 5 Test App – CI/CD Test Version)");
 });
 
 app.get("/health", (req, res) => {
